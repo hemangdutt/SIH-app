@@ -25,7 +25,7 @@ def distance(box1, box2):
     return ((x2 - x1) ** 2 + (y2 - y1) ** 2) ** 0.5
 
 
-def is_same_line(box1, box2, tolerance=20):
+def is_same_line(box1, box2, tolerance=25):
 
     _, y1 = get_center(box1)
     _, y2 = get_center(box2)
@@ -596,6 +596,79 @@ def find_manufacturer():
     return None
 
 
+
+# find commodity
+
+def find_commodity():
+
+    # first check if commodity and its value are in the same ocr box
+    for item in ocr_data:
+
+        result = re.search(
+            r"commodity\s*[:\-]?\s*(.+)",
+            item["text"],
+            re.I
+        )
+
+        if result:
+
+            value = result.group(1).strip()
+
+            if value:
+
+                return {
+                    "value": value,
+                    "confidence": item["confidence"],
+                    "source": item["text"]
+                }
+
+    # if the value is in another box, find the commodity label first
+    for item in ocr_data:
+
+        if re.search(r"\bcommodity\b", item["text"], re.I):
+
+            candidates = find_candidates(item["box"])
+
+            # look through nearby candidates
+            for candidate in candidates:
+
+                value = candidate["text"].strip()
+
+                # remove symbols that ocr may have picked up
+                value = value.lstrip("*:,- ")
+
+                if not value or len(value) < 2:
+                    continue
+
+                # skip other known labels
+                if re.search(
+                    r"net\s*(?:qty|quantity)"
+                    r"|m\.?\s*r\.?\s*p\.?"
+                    r"|max\.?\s*retail\s*price"
+                    r"|mfg\.?\s*date"
+                    r"|manufacturing\s*date"
+                    r"|manufacturer"
+                    r"|consumer"
+                    r"|inclusive"
+                    r"|usp",
+                    value,
+                    re.I
+                ):
+                    continue
+
+                # skip values that contain only numbers or symbols
+                if re.fullmatch(r"[\d\s.,:/\-]+", value):
+                    continue
+
+                return {
+                    "value": value,
+                    "confidence": candidate["confidence"],
+                    "source": candidate["text"]
+                }
+
+    return None
+
+
 # find country of origin
 
 def find_country_of_origin():
@@ -672,7 +745,7 @@ ocr = pcr(
 )
 
 result = ocr.predict(
-    'real1.jpeg'
+    'real2.jpeg'
 )
 
 
@@ -703,7 +776,71 @@ for res in result:
             "box": box
 
         })
+# rule engine
 
+def run_rules(data):
+
+    # start with pass
+    result = 1
+
+    # check manufacturer
+    if data["manufacturer"]:
+        manufacturer_rule = 1
+    else:
+        manufacturer_rule = 0
+
+    # check commodity
+    if data["commodity"]:
+        commodity_rule = 1
+    else:
+        commodity_rule = 0
+
+    # check net quantity
+    if data["net_quantity"]:
+        quantity_rule = 1
+    else:
+        quantity_rule = 0
+
+    # check mrp
+    if data["mrp"]:
+        mrp_rule = 1
+    else:
+        mrp_rule = 0
+
+    # check manufacturing date
+    if data["manufacturing_date"]:
+        manufacturing_date_rule = 1
+    else:
+        manufacturing_date_rule = 0
+
+    # check consumer care
+    if data["consumer_care"]:
+        consumer_care_rule = 1
+    else:
+        consumer_care_rule = 0
+
+    # check country of origin
+    if data["country_of_origin"]:
+        country_rule = 1
+    else:
+        country_rule = 0
+
+    # multiplication logic
+    result = (
+        manufacturer_rule
+        * commodity_rule
+        * quantity_rule
+        * mrp_rule
+        * manufacturing_date_rule
+        * consumer_care_rule
+        * country_rule
+    )
+
+    # final decision
+    if result == 1:
+        return "PASS"
+    else:
+        return "FAIL"
 
 # ________________________________________________________________________________________________
 
@@ -760,3 +897,65 @@ print("country of origin -", country)
 consumer_care = find_consumer_care()
 
 print("consumer care -", consumer_care)
+
+country = find_country_of_origin()
+
+print("country of origin -", country)
+
+
+consumer_care = find_consumer_care()
+
+print("consumer care -", consumer_care)
+
+
+commodity = find_commodity()
+
+print("commodity -", commodity)
+
+
+# structured product data for the rule engine
+
+product_data = {
+    "commodity": commodity,
+    "manufacturer": manufacturer,
+    "net_quantity": quantity,
+    "mrp": mrp,
+    "manufacturing_date": manufacturing_date,
+    "country_of_origin": country,
+    "consumer_care": consumer_care
+}
+
+
+print("\n xxxxxxxxxxxxxxxxxxxx product data xxxxxxxxxxxxxxxxxxxx\n")
+
+for field, data in product_data.items():
+
+    if not data:
+        print(f"✗ {field}: Not detected")
+
+    elif field == "consumer_care":
+
+        phone = data.get("phone")
+        email = data.get("email")
+
+        if phone or email:
+            print(f"✓ {field}:")
+
+            if phone:
+                print(f"    phone: {phone}")
+
+            if email:
+                print(f"    email: {email}")
+        else:
+            print(f"✗ {field}: Not detected")
+
+    else:
+        print(f"✓ {field}: {data['value']}")
+final_result=run_rules(product_data)
+
+print("xxxxxxxxxxxxxxxxxxxxxxxxx  Result xxxxxxxxxxxxxxxxxxxxxxx")
+if final_result=="PASS":
+    print("Pass")
+else:
+    print("Fail")
+
